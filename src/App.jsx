@@ -346,7 +346,7 @@ function Clientes({ data, update, isAdmin }) {
                             {historyFor === v.id && (
                               <tr>
                                 <td colSpan={4} className="pb-3">
-                                  <VehicleHistory data={data} vehicleId={v.id} />
+                                  <VehicleHistory data={data} vehicleId={v.id} update={update} />
                                 </td>
                               </tr>
                             )}
@@ -371,28 +371,64 @@ function Clientes({ data, update, isAdmin }) {
   );
 }
 
-function VehicleHistory({ data, vehicleId }) {
+function VehicleHistory({ data, vehicleId, update }) {
+  const [showForm, setShowForm] = useState(false);
   const orders = data.orders.filter((o) => o.vehicleId === vehicleId).sort((a, b) => (a.date < b.date ? 1 : -1));
-  if (orders.length === 0) return <p className="text-xs" style={{ color: "var(--muted)" }}>Sin servicios registrados para este vehículo.</p>;
+
+  const addHistorical = (h) => update((d) => {
+    d.orders.push({ id: uid("ot"), vehicleId, date: h.date, status: "completada", items: [], labor: Number(h.cost) || 0, description: h.description, historical: true });
+    return d;
+  });
+
   return (
     <div className="rounded p-3" style={{ background: "#F5F6F7" }}>
-      <ul className="space-y-2">
-        {orders.map((o) => {
-          const total = o.items.reduce((s, it) => s + it.qty * it.price, 0) + Number(o.labor || 0);
-          const s = STATUS[o.status];
-          return (
-            <li key={o.id} className="text-sm flex items-center justify-between">
-              <div>
-                <span className="mono text-xs" style={{ color: "var(--muted)" }}>{o.date}</span> — {o.description}
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="stamp" style={{ color: s.color, borderColor: s.color, background: s.bg }}>{s.label}</span>
-                <span className="font-medium">{money(total)}</span>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+      {orders.length === 0 ? (
+        <p className="text-xs mb-2" style={{ color: "var(--muted)" }}>Sin servicios registrados para este vehículo.</p>
+      ) : (
+        <ul className="space-y-2 mb-2">
+          {orders.map((o) => {
+            const total = o.items.reduce((s, it) => s + it.qty * it.price, 0) + Number(o.labor || 0);
+            const s = STATUS[o.status];
+            return (
+              <li key={o.id} className="text-sm flex items-center justify-between">
+                <div>
+                  <span className="mono text-xs" style={{ color: "var(--muted)" }}>{o.date}</span> — {o.description}
+                  {o.historical && <span className="text-xs ml-2" style={{ color: "var(--muted)" }}>(histórico)</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="stamp" style={{ color: s.color, borderColor: s.color, background: s.bg }}>{s.label}</span>
+                  <span className="font-medium">{money(total)}</span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {showForm ? (
+        <HistoricalServiceForm onCancel={() => setShowForm(false)} onSave={(h) => { addHistorical(h); setShowForm(false); }} />
+      ) : (
+        <button onClick={() => setShowForm(true)} className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1"><Plus size={13} /> Agregar servicio anterior</button>
+      )}
+    </div>
+  );
+}
+
+function HistoricalServiceForm({ onSave, onCancel }) {
+  const [f, setF] = useState({ date: todayISO(), description: "", cost: "" });
+  return (
+    <div className="p-3 rounded border mt-1" style={{ borderColor: "var(--line)", background: "#fff" }}>
+      <p className="text-xs mb-2" style={{ color: "var(--muted)" }}>Registra un mantenimiento ya realizado hace tiempo. Queda en el historial pero no genera orden activa ni pide factura.</p>
+      <div className="grid grid-cols-3 gap-2 mb-2">
+        <input className="input" type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />
+        <input className="input col-span-2" placeholder="Descripción del servicio" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
+      </div>
+      <div className="w-32 mb-2">
+        <input className="input" type="number" placeholder="Costo (opcional)" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} />
+      </div>
+      <div className="flex gap-2">
+        <button disabled={!f.description} onClick={() => onSave(f)} className="btn-primary px-3 py-1.5 text-xs disabled:opacity-40">Guardar</button>
+        <button onClick={onCancel} className="btn-secondary px-3 py-1.5 text-xs">Cancelar</button>
+      </div>
     </div>
   );
 }
@@ -471,7 +507,7 @@ function Ordenes({ data, update, isAdmin }) {
               <div className="flex items-start justify-between">
                 <div>
                   <div className="font-semibold">{v ? `${v.brand} ${v.model} — ${v.plate}` : "Vehículo eliminado"}</div>
-                  <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>{c?.name || "Cliente"} · {o.date}</div>
+                  <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>{c?.name || "Cliente"} · {o.date}{o.historical ? " · histórico" : ""}</div>
                   <p className="text-sm mt-2">{o.description}</p>
                   {o.items.length > 0 && (
                     <ul className="text-xs mt-2 space-y-0.5" style={{ color: "var(--muted)" }}>
@@ -638,7 +674,7 @@ function PartForm({ onSave, onCancel }) {
 
 /* ---------------- Facturación ---------------- */
 function Facturacion({ data, update, onPrint }) {
-  const invoiceable = data.orders.filter((o) => o.status === "completada" && !data.invoices.some((i) => i.orderId === o.id));
+  const invoiceable = data.orders.filter((o) => o.status === "completada" && !o.historical && !data.invoices.some((i) => i.orderId === o.id));
 
   const createInvoice = (order) => update((d) => {
     const partsTotal = order.items.reduce((s, it) => s + it.qty * it.price, 0);
