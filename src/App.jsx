@@ -28,6 +28,7 @@ export default function TallerApp() {
   const [saveErr, setSaveErr] = useState(false);
   const [user, setUser] = useState(null);
   const [printInvoice, setPrintInvoice] = useState(null);
+  const [printVehicleHistory, setPrintVehicleHistory] = useState(null);
 
   // Suscripción en tiempo real a los datos compartidos del taller
   useEffect(() => {
@@ -143,7 +144,7 @@ export default function TallerApp() {
               ) : tab === "dashboard" ? (
                 <Dashboard data={data} setTab={setTab} />
               ) : tab === "clientes" ? (
-                <Clientes data={data} update={update} isAdmin={isAdmin} />
+                <Clientes data={data} update={update} isAdmin={isAdmin} onPrintHistory={setPrintVehicleHistory} />
               ) : tab === "ordenes" ? (
                 <Ordenes data={data} update={update} isAdmin={isAdmin} />
               ) : tab === "inventario" ? (
@@ -160,6 +161,9 @@ export default function TallerApp() {
 
       {printInvoice && (
         <PrintOverlay invoice={printInvoice} data={data} onClose={() => setPrintInvoice(null)} />
+      )}
+      {printVehicleHistory && (
+        <VehicleHistoryPrintOverlay data={data} vehicleId={printVehicleHistory} onClose={() => setPrintVehicleHistory(null)} />
       )}
     </div>
   );
@@ -278,7 +282,7 @@ function Dashboard({ data, setTab }) {
 }
 
 /* ---------------- Clientes ---------------- */
-function Clientes({ data, update, isAdmin }) {
+function Clientes({ data, update, isAdmin, onPrintHistory }) {
   const [q, setQ] = useState("");
   const [showClientForm, setShowClientForm] = useState(false);
   const [vehicleFormFor, setVehicleFormFor] = useState(null);
@@ -328,16 +332,20 @@ function Clientes({ data, update, isAdmin }) {
                     <table className="w-full text-sm mb-3">
                       <thead>
                         <tr className="text-left text-xs" style={{ color: "var(--muted)" }}>
-                          <th className="pb-1.5">Placa</th><th className="pb-1.5">Marca / Modelo</th><th className="pb-1.5">Año</th><th></th>
+                          <th className="pb-1.5">Placa</th><th className="pb-1.5">Marca / Modelo</th><th className="pb-1.5">Año</th><th className="pb-1.5">Último km</th><th></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {vehicles.map((v) => (
+                        {vehicles.map((v) => {
+                          const vOrders = data.orders.filter((o) => o.vehicleId === v.id && o.mileage).sort((a, b) => (a.date < b.date ? 1 : -1));
+                          const lastMileage = vOrders[0]?.mileage;
+                          return (
                           <>
                             <tr key={v.id} className="border-t" style={{ borderColor: "var(--line)" }}>
                               <td className="py-1.5 mono">{v.plate}</td>
                               <td className="py-1.5">{v.brand} {v.model}</td>
                               <td className="py-1.5">{v.year}</td>
+                              <td className="py-1.5 mono" style={{ color: "var(--muted)" }}>{lastMileage ? `${Number(lastMileage).toLocaleString("es")} km` : "—"}</td>
                               <td className="py-1.5 text-right flex items-center justify-end gap-2">
                                 <button onClick={() => setHistoryFor(historyFor === v.id ? null : v.id)} className="text-xs flex items-center gap-1" style={{ color: "var(--steel)" }}><History size={12} /> Historial</button>
                                 {isAdmin && <button onClick={() => removeVehicle(v.id)} style={{ color: "var(--danger)" }}><Trash2 size={13} /></button>}
@@ -345,13 +353,14 @@ function Clientes({ data, update, isAdmin }) {
                             </tr>
                             {historyFor === v.id && (
                               <tr>
-                                <td colSpan={4} className="pb-3">
-                                  <VehicleHistory data={data} vehicleId={v.id} update={update} />
+                                <td colSpan={5} className="pb-3">
+                                  <VehicleHistory data={data} vehicleId={v.id} update={update} isAdmin={isAdmin} onPrintHistory={onPrintHistory} />
                                 </td>
                               </tr>
                             )}
                           </>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   )}
@@ -371,12 +380,12 @@ function Clientes({ data, update, isAdmin }) {
   );
 }
 
-function VehicleHistory({ data, vehicleId, update }) {
+function VehicleHistory({ data, vehicleId, update, isAdmin, onPrintHistory }) {
   const [showForm, setShowForm] = useState(false);
   const orders = data.orders.filter((o) => o.vehicleId === vehicleId).sort((a, b) => (a.date < b.date ? 1 : -1));
 
   const addHistorical = (h) => update((d) => {
-    d.orders.push({ id: uid("ot"), vehicleId, date: h.date, status: "completada", items: [], labor: Number(h.cost) || 0, description: h.description, historical: true });
+    d.orders.push({ id: uid("ot"), vehicleId, date: h.date, status: "completada", items: [], labor: Number(h.cost) || 0, description: h.description, mileage: h.mileage ? Number(h.mileage) : null, historical: true });
     return d;
   });
 
@@ -393,6 +402,7 @@ function VehicleHistory({ data, vehicleId, update }) {
               <li key={o.id} className="text-sm flex items-center justify-between">
                 <div>
                   <span className="mono text-xs" style={{ color: "var(--muted)" }}>{o.date}</span> — {o.description}
+                  {o.mileage ? <span className="text-xs ml-2 mono" style={{ color: "var(--muted)" }}>· {Number(o.mileage).toLocaleString("es")} km</span> : null}
                   {o.historical && <span className="text-xs ml-2" style={{ color: "var(--muted)" }}>(histórico)</span>}
                 </div>
                 <div className="flex items-center gap-2">
@@ -404,17 +414,22 @@ function VehicleHistory({ data, vehicleId, update }) {
           })}
         </ul>
       )}
-      {showForm ? (
-        <HistoricalServiceForm onCancel={() => setShowForm(false)} onSave={(h) => { addHistorical(h); setShowForm(false); }} />
-      ) : (
-        <button onClick={() => setShowForm(true)} className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1"><Plus size={13} /> Agregar servicio anterior</button>
-      )}
+      <div className="flex items-center gap-2">
+        {showForm ? (
+          <HistoricalServiceForm onCancel={() => setShowForm(false)} onSave={(h) => { addHistorical(h); setShowForm(false); }} />
+        ) : (
+          <button onClick={() => setShowForm(true)} className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1"><Plus size={13} /> Agregar servicio anterior</button>
+        )}
+        {isAdmin && !showForm && orders.length > 0 && (
+          <button onClick={() => onPrintHistory(vehicleId)} className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1"><Printer size={13} /> Exportar historial a PDF</button>
+        )}
+      </div>
     </div>
   );
 }
 
 function HistoricalServiceForm({ onSave, onCancel }) {
-  const [f, setF] = useState({ date: todayISO(), description: "", cost: "" });
+  const [f, setF] = useState({ date: todayISO(), description: "", cost: "", mileage: "" });
   return (
     <div className="p-3 rounded border mt-1" style={{ borderColor: "var(--line)", background: "#fff" }}>
       <p className="text-xs mb-2" style={{ color: "var(--muted)" }}>Registra un mantenimiento ya realizado hace tiempo. Queda en el historial pero no genera orden activa ni pide factura.</p>
@@ -422,8 +437,9 @@ function HistoricalServiceForm({ onSave, onCancel }) {
         <input className="input" type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />
         <input className="input col-span-2" placeholder="Descripción del servicio" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
       </div>
-      <div className="w-32 mb-2">
-        <input className="input" type="number" placeholder="Costo (opcional)" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} />
+      <div className="flex gap-2 mb-2">
+        <input className="input w-32" type="number" placeholder="Costo (opcional)" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} />
+        <input className="input w-40" type="number" placeholder="Kilometraje (opcional)" value={f.mileage} onChange={(e) => setF({ ...f, mileage: e.target.value })} />
       </div>
       <div className="flex gap-2">
         <button disabled={!f.description} onClick={() => onSave(f)} className="btn-primary px-3 py-1.5 text-xs disabled:opacity-40">Guardar</button>
@@ -507,7 +523,7 @@ function Ordenes({ data, update, isAdmin }) {
               <div className="flex items-start justify-between">
                 <div>
                   <div className="font-semibold">{v ? `${v.brand} ${v.model} — ${v.plate}` : "Vehículo eliminado"}</div>
-                  <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>{c?.name || "Cliente"} · {o.date}{o.historical ? " · histórico" : ""}</div>
+                  <div className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>{c?.name || "Cliente"} · {o.date}{o.mileage ? ` · ${Number(o.mileage).toLocaleString("es")} km` : ""}{o.historical ? " · histórico" : ""}</div>
                   <p className="text-sm mt-2">{o.description}</p>
                   {o.items.length > 0 && (
                     <ul className="text-xs mt-2 space-y-0.5" style={{ color: "var(--muted)" }}>
@@ -540,6 +556,7 @@ function OrderForm({ data, onSave, onCancel }) {
   const [vehicleId, setVehicleId] = useState("");
   const [description, setDescription] = useState("");
   const [labor, setLabor] = useState("");
+  const [mileage, setMileage] = useState("");
   const [items, setItems] = useState([]);
   const [partId, setPartId] = useState("");
   const [qty, setQty] = useState(1);
@@ -555,7 +572,7 @@ function OrderForm({ data, onSave, onCancel }) {
 
   return (
     <div className="card p-4 mb-4 space-y-3">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <select className="input" value={clientId} onChange={(e) => { setClientId(e.target.value); setVehicleId(""); }}>
           <option value="">Selecciona cliente</option>
           {data.clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -564,6 +581,7 @@ function OrderForm({ data, onSave, onCancel }) {
           <option value="">Selecciona vehículo</option>
           {vehicles.map((v) => <option key={v.id} value={v.id}>{v.brand} {v.model} — {v.plate}</option>)}
         </select>
+        <input className="input" type="number" placeholder="Kilometraje" value={mileage} onChange={(e) => setMileage(e.target.value)} />
       </div>
       <textarea className="input" placeholder="Descripción del trabajo" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
 
@@ -597,7 +615,7 @@ function OrderForm({ data, onSave, onCancel }) {
       </div>
 
       <div className="flex gap-2">
-        <button disabled={!vehicleId || !description} onClick={() => onSave({ vehicleId, description, labor: Number(labor) || 0, items })} className="btn-primary px-4 py-1.5 text-sm disabled:opacity-40">Crear orden</button>
+        <button disabled={!vehicleId || !description} onClick={() => onSave({ vehicleId, description, labor: Number(labor) || 0, items, mileage: mileage ? Number(mileage) : null })} className="btn-primary px-4 py-1.5 text-sm disabled:opacity-40">Crear orden</button>
         <button onClick={onCancel} className="btn-secondary px-4 py-1.5 text-sm">Cancelar</button>
       </div>
     </div>
@@ -812,6 +830,68 @@ function InvoiceDoc({ invoice, order, vehicle, client }) {
         </>
       )}
       <div className="text-right taller-head text-lg font-bold border-t pt-2" style={{ borderColor: "#D8DCE1" }}>Total: {money(invoice.total)}</div>
+    </div>
+  );
+}
+
+function VehicleHistoryPrintOverlay({ data, vehicleId, onClose }) {
+  const v = data.vehicles.find((v) => v.id === vehicleId);
+  const c = data.clients.find((c) => c.id === v?.clientId);
+  const orders = data.orders.filter((o) => o.vehicleId === vehicleId).sort((a, b) => (a.date < b.date ? 1 : -1));
+  return (
+    <>
+      <div className="fixed inset-0 z-40 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.4)" }}>
+        <div className="card p-6 w-[520px] max-h-[80vh] overflow-auto" style={{ background: "#fff" }}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="taller-head text-lg font-bold">Vista previa del historial</h2>
+            <button onClick={onClose}><X size={18} /></button>
+          </div>
+          <VehicleHistoryDoc vehicle={v} client={c} orders={orders} />
+          <div className="flex gap-2 mt-5">
+            <button onClick={() => window.print()} className="btn-primary px-4 py-2 text-sm flex items-center gap-1.5"><Printer size={14} /> Imprimir / Guardar PDF</button>
+            <button onClick={onClose} className="btn-secondary px-4 py-2 text-sm">Cerrar</button>
+          </div>
+        </div>
+      </div>
+      <div className="print-area p-10">
+        <VehicleHistoryDoc vehicle={v} client={c} orders={orders} />
+      </div>
+    </>
+  );
+}
+
+function VehicleHistoryDoc({ vehicle, client, orders }) {
+  return (
+    <div style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif", color: "#1B2430" }}>
+      <div className="mb-4">
+        <div className="taller-head text-xl font-bold">Taller Central</div>
+        <div className="text-xs" style={{ color: "#5B6472" }}>Historial de servicio</div>
+      </div>
+      <div className="text-sm mb-4">
+        <div><strong>Cliente:</strong> {client?.name || "—"}</div>
+        {vehicle && <div><strong>Vehículo:</strong> {vehicle.brand} {vehicle.model} {vehicle.year} — {vehicle.plate}</div>}
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left border-b" style={{ borderColor: "#D8DCE1" }}>
+            <th className="py-1">Fecha</th><th className="py-1">Descripción</th><th className="py-1">Km</th><th className="py-1 text-right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => {
+            const total = o.items.reduce((s, it) => s + it.qty * it.price, 0) + Number(o.labor || 0);
+            return (
+              <tr key={o.id} className="border-b" style={{ borderColor: "#EEF0F2" }}>
+                <td className="py-1">{o.date}</td>
+                <td className="py-1">{o.description}</td>
+                <td className="py-1">{o.mileage ? Number(o.mileage).toLocaleString("es") : "—"}</td>
+                <td className="py-1 text-right">{money(total)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {orders.length === 0 && <p className="text-sm mt-2" style={{ color: "#5B6472" }}>Sin servicios registrados.</p>}
     </div>
   );
 }
